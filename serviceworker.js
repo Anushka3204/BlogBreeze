@@ -1,93 +1,124 @@
 const CACHE_NAME = 'blogbreeze-v1';
 const filesToCache = [
-  '/', 
-  'index.html',
-  'manifest.json',
+  '/',
+  '/index.html',
+  '/manifest.json',
   '/src/assets/react.svg',
   '/public/icon.png',
   '/src/index.css',
   '/src/main.jsx',
 ];
 
-// Install event: Caching important files
+// Install event: Cache core files
 self.addEventListener('install', (event) => {
   console.log('Service Worker: Installed');
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Service Worker: Caching files');
-        return cache.addAll(filesToCache);
-      })
+    caches.open(CACHE_NAME).then((cache) => {
+      console.log('Service Worker: Caching files...');
+      return cache.addAll(filesToCache);
+    })
   );
+  self.skipWaiting();
 });
 
-// Activate event: Cleaning up old caches
+// Activate event: Remove old caches
 self.addEventListener('activate', (event) => {
   console.log('Service Worker: Activated');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('Service Worker: Deleting old cache', cacheName);
-            return caches.delete(cacheName);
+    caches.keys().then((cacheNames) =>
+      Promise.all(
+        cacheNames.map((cache) => {
+          if (cache !== CACHE_NAME) {
+            console.log('Service Worker: Removing old cache', cache);
+            return caches.delete(cache);
           }
+        })
+      )
+    )
+  );
+  return self.clients.claim();
+});
+
+// Fetch event: Serve cached or network fallback
+self.addEventListener('fetch', (event) => {
+  console.log('Fetch event for:', event.request.url);
+  if (event.request.url.includes('firestore.googleapis.com')) {
+    return event.respondWith(fetch(event.request));
+  }
+
+  event.respondWith(
+    caches.match(event.request).then((response) => {
+      return (
+        response ||
+        fetch(event.request).then((networkResponse) => {
+          return caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, networkResponse.clone());
+            return networkResponse;
+          });
         })
       );
     })
   );
 });
 
-// Fetch event: Intercepting requests and serving from cache if available
-self.addEventListener('fetch', (event) => {
-  console.log('Service Worker: Fetching', event.request.url);
+// Sync event: Handle background sync
+self.addEventListener('sync', (event) => {
+  console.log('Sync event triggered for tag:', event.tag || '(no tag)');
 
-  event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        if (cachedResponse) {
-          console.log('Service Worker: Returning cached response');
-          return cachedResponse; // Return the cached response if available
+  event.waitUntil(
+    (async () => {
+      try {
+        console.log('Performing background sync task for tag:', event.tag);
+
+        // Simulated fetch
+        const response = await fetch('/');
+        if (response.ok) {
+          console.log('Fetch successful');
         }
 
-        return fetch(event.request)
-          .then((networkResponse) => {
-            caches.open(CACHE_NAME).then((cache) => {
-              console.log('Service Worker: Caching new response for', event.request.url);
-              cache.put(event.request, networkResponse.clone()); // Cache the new response
-            });
-            return networkResponse;
+        // Simulate delay
+        await new Promise((res) => setTimeout(res, 1000));
+
+        console.log('Sync task complete for tag:', event.tag);
+        console.log('Sync successful');
+
+        // Notify all clients
+        const allClients = await self.clients.matchAll();
+        allClients.forEach(client => {
+          client.postMessage({
+            type: 'SYNC_SUCCESS',
+            tag: event.tag,
+            message: `Sync completed for: ${event.tag}`
           });
-      })
+        });
+
+      } catch (err) {
+        console.error('Sync task failed:', err);
+      }
+    })()
   );
 });
 
+// Push Notification: Handle push events
 self.addEventListener('push', (event) => {
-    console.log('Push notification received:', event);
-  
-    if (event && event.data) {
-      // Parse the push notification data
-      const data = event.data.json();
-  
-      if (data.method === 'pushMessage') {
-        console.log('Push notification sent with message:', data.message);
-  
-        // Set up notification options (like body, icon, etc.)
-        const options = {
-          body: data.message || 'Hello, this is a default message!', // Default or push message
-          icon: '/src/assets/react.svg', // Icon for the notification
-          badge: '/src/assets/react.svg', // Badge icon for the notification
-        };
-  
-        // Check if the notification permission is granted before showing the notification
-        if (Notification.permission === 'granted') {
-          // Show the notification with a title
-          event.waitUntil(
-            self.registration.showNotification('Blog Breeze', options)
-          );
-        } else {
-          console.log('Notification permission not granted yet.');
-        }
+  console.log('Push event received:', event);
+
+  if (event.data) {
+    const data = event.data.json();
+    if (data.method === 'pushMessage') {
+      const options = {
+        body: data.message || 'Hello, this is a default message!',
+        icon: '/src/assets/react.svg',
+        badge: '/src/assets/react.svg',
+      };
+
+      if (Notification.permission === 'granted') {
+        event.waitUntil(
+          self.registration.showNotification('Blog Breeze', options)
+        );
+      } else {
+        console.warn('Notification permission not granted');
       }
     }
-  });
+  }
+});
